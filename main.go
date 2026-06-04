@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"log"
 	"os"
 	"os/signal"
 	"syscall"
@@ -24,7 +25,7 @@ func main() {
 }
 
 func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir string) int {
-	logger := initializeLogger()
+	logger, loggerClose := initializeLogger()
 
 	st, err := store.New(dataDir, logger)
 	if err != nil {
@@ -40,6 +41,11 @@ func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir s
 	<-ctx.Done()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+
+	// closing loogger buffer
+	if err := loggerClose(); err != nil {
+		log.Println(err.Error())
+	}
 
 	logger.Printf("Linko is shutting down")
 	if err := s.shutdown(shutdownCtx); err != nil {
