@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"flag"
-	"log"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -29,7 +29,7 @@ func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir s
 
 	st, err := store.New(dataDir, logger)
 	if err != nil {
-		logger.Printf("failed to create store: %v", err)
+		logger.Info(fmt.Sprintf("failed to create store: %s\n", err.Error()))
 		return 1
 	}
 	s := newServer(*st, httpPort, cancel, logger)
@@ -44,17 +44,17 @@ func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir s
 
 	// closing loogger buffer
 	if err := loggerClose(); err != nil {
-		log.Println(err.Error())
+		logger.Info(fmt.Sprintf("error while trying to flush logger buffer: %s\n", err.Error()))
 	}
 
-	logger.Printf("Linko is shutting down")
+	logger.Info(fmt.Sprintln(("Linko is shutting down")))
 	if err := s.shutdown(shutdownCtx); err != nil {
-		logger.Printf("failed to shutdown server: %v", err)
+		logger.Info(fmt.Sprintf("failed to shutdown server: %s\n", err))
 		return 1
 	}
 
 	if serverErr != nil {
-		logger.Printf("server error: %v", serverErr)
+		logger.Info(fmt.Sprintf("server error: %s\n", serverErr.Error()))
 		return 1
 	}
 	return 0
