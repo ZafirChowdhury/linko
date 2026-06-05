@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 )
@@ -15,18 +14,22 @@ func initializeLogger() (*slog.Logger, func() error) {
 	fileName, ok := os.LookupEnv("LINKO_LOG_FILE")
 	if !ok {
 		fmt.Println("LOG: LINKO_LOG_FILE not found")
-		return slog.New(slog.NewTextHandler(os.Stderr, nil)), noop
+		debugHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+			Level: slog.LevelDebug,
+		})
+
+		return slog.New(debugHandler), noop
 	}
 
 	file, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
-	bufferedFile := bufio.NewWriterSize(file, 8192)
 	if err != nil {
 		fmt.Println(err.Error())
 		return nil, noop
 	}
-	fmt.Println("LOG: LINKO_LOG_FILE found")
-	mw := io.MultiWriter(os.Stderr, bufferedFile)
 
+	bufferedFile := bufio.NewWriterSize(file, 8192)
+
+	fmt.Println("LOG: LINKO_LOG_FILE found")
 	closeBuffer := func() error {
 		if err := bufferedFile.Flush(); err != nil {
 			return err
@@ -36,5 +39,13 @@ func initializeLogger() (*slog.Logger, func() error) {
 		return nil
 	}
 
-	return slog.New(slog.NewTextHandler(mw, nil)), closeBuffer
+	debugHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	})
+
+	infoHandler := slog.NewTextHandler(bufferedFile, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	})
+
+	return slog.New(slog.NewMultiHandler(debugHandler, infoHandler)), closeBuffer
 }
