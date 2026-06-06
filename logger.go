@@ -43,7 +43,7 @@ func initializeLogger() (*slog.Logger, func() error) {
 		Level: slog.LevelDebug,
 	})
 
-	infoHandler := slog.NewTextHandler(bufferedFile, &slog.HandlerOptions{
+	infoHandler := slog.NewJSONHandler(bufferedFile, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	})
 
