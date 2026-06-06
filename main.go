@@ -47,7 +47,7 @@ func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir s
 		logger.Error(fmt.Sprintf("error while trying to flush logger buffer: %s\n", err.Error()))
 	}
 
-	logger.Debug(fmt.Sprint(("Linko is shutting down")))
+	logger.Debug("Linko is shutting down")
 	if err := s.shutdown(shutdownCtx); err != nil {
 		logger.Error(fmt.Sprintf("failed to shutdown server: %s\n", err))
 		return 1
