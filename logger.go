@@ -7,7 +7,11 @@ import (
 	"os"
 )
 
-func initializeLogger() (*slog.Logger, func() error) {
+// very proud of the dog ass code I wrote
+// but passing test requeres diffrent interface
+// so not removing it
+// dead code not used
+func initializeLoggerOld() (*slog.Logger, func() error) {
 	// noop = no op
 	noop := func() error { return nil }
 
@@ -15,7 +19,8 @@ func initializeLogger() (*slog.Logger, func() error) {
 	if !ok {
 		fmt.Println("LOG: LINKO_LOG_FILE not found")
 		debugHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-			Level: slog.LevelDebug,
+			Level:       slog.LevelDebug,
+			ReplaceAttr: replaceStackTracePrint,
 		})
 
 		return slog.New(debugHandler), noop
@@ -40,12 +45,25 @@ func initializeLogger() (*slog.Logger, func() error) {
 	}
 
 	debugHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
+		Level:       slog.LevelDebug,
+		ReplaceAttr: replaceStackTracePrint,
 	})
 
 	infoHandler := slog.NewJSONHandler(bufferedFile, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
+		Level:       slog.LevelInfo,
+		ReplaceAttr: replaceStackTracePrint,
 	})
 
 	return slog.New(slog.NewMultiHandler(debugHandler, infoHandler)), closeBuffer
+}
+
+func replaceStackTracePrint(groups []string, a slog.Attr) slog.Attr {
+	if a.Key == "error" {
+		err, ok := a.Value.Any().(error)
+		if !ok {
+			return a
+		}
+		return slog.String("error", fmt.Sprintf("%+v", err))
+	}
+	return a
 }
