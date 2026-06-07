@@ -45,13 +45,11 @@ func (s *server) handlerShortenLink(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing url parameter", http.StatusBadRequest)
 		return
 	}
-
 	u, err := url.Parse(longURL)
 	if err != nil || u.Scheme == "" || u.Host == "" {
 		http.Error(w, "invalid URL: must include scheme (http/https) and host", http.StatusBadRequest)
 		return
 	}
-
 	if err := checkDestination(longURL); err != nil {
 		http.Error(w, fmt.Sprintf("invalid target URL: %v", err), http.StatusBadRequest)
 		return
@@ -61,7 +59,7 @@ func (s *server) handlerShortenLink(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to shorten URL", http.StatusInternalServerError)
 		return
 	}
-	s.logger.Error("Successfully generated short code")
+	s.logger.Info("Successfully generated short code", "long_url", longURL, "short_code", shortCode)
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusCreated)
 	io.WriteString(w, shortCode)
@@ -73,7 +71,7 @@ func (s *server) handlerRedirect(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, store.ErrNotFound) {
 			http.Error(w, "not found", http.StatusNotFound)
 		} else {
-			s.logger.Error(fmt.Sprintf("failed to lookup URL: %v\n", err))
+			s.logger.Error("failed to lookup URL", "error", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 		}
 		return
@@ -83,7 +81,6 @@ func (s *server) handlerRedirect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "destination unavailable", http.StatusBadGateway)
 		return
 	}
-
 	redirectsMu.Lock()
 	redirects = append(redirects, strings.Repeat(longURL, 1024))
 	redirectsMu.Unlock()
@@ -94,7 +91,7 @@ func (s *server) handlerRedirect(w http.ResponseWriter, r *http.Request) {
 func (s *server) handlerListURLs(w http.ResponseWriter, r *http.Request) {
 	codes, err := s.store.List(r.Context())
 	if err != nil {
-		s.logger.Error(fmt.Sprintf("failed to list URLs: %v", err))
+		s.logger.Error("failed to list URLs", "error", err)
 		http.Error(w, "failed to list URLs", http.StatusInternalServerError)
 		return
 	}
