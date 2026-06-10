@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -17,6 +16,7 @@ import (
 	"boot.dev/linko/internal/store"
 	tint "github.com/lmittmann/tint"
 	isatty "github.com/mattn/go-isatty"
+	"github.com/natefinch/lumberjack"
 	pkgerr "github.com/pkg/errors"
 )
 
@@ -38,6 +38,11 @@ func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir s
 
 	logger, closeLogger, err := initializeLogger(os.Getenv("LINKO_LOG_FILE"))
 
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to initialize logger: %v\n", err)
+		return 1
+	}
+
 	// build info
 	logger = logger.With(
 		slog.String("git_sha", build.GitSHA),
@@ -46,10 +51,6 @@ func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir s
 		slog.String("hostname", hostname),
 	)
 
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to initialize logger: %v\n", err)
-		return 1
-	}
 	defer func() {
 		if err := closeLogger(); err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to close logger: %v\n", err)
@@ -97,38 +98,25 @@ func initializeLogger(logFile string) (*slog.Logger, closeFunc, error) {
 			NoColor:     !colorEnabled,
 		}),
 	}
-	closers := []closeFunc{}
+
+	closer := func() error { return nil }
 
 	if logFile != "" {
-		file, err := os.OpenFile(logFile, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to open log file: %w", err)
+		lj := &lumberjack.Logger{
+			Filename:   logFile,
+			MaxSize:    1,
+			MaxBackups: 10,
+			MaxAge:     28,
+			LocalTime:  false,
+			Compress:   true,
 		}
-		bufferedFile := bufio.NewWriterSize(file, 8192)
-		close := func() error {
-			if err := bufferedFile.Flush(); err != nil {
-				return fmt.Errorf("failed to flush log file: %w", err)
-			}
-			if err := file.Close(); err != nil {
-				return fmt.Errorf("failed to close log file: %w", err)
-			}
-			return nil
-		}
-		handlers = append(handlers, slog.NewJSONHandler(bufferedFile, &slog.HandlerOptions{
+		handlers = append(handlers, slog.NewJSONHandler(lj, &slog.HandlerOptions{
 			Level:       slog.LevelInfo,
 			ReplaceAttr: replaceAttr,
 		}))
-		closers = append(closers, close)
+		closer = lj.Close
 	}
-	closer := func() error {
-		var errs []error
-		for _, close := range closers {
-			if err := close(); err != nil {
-				errs = append(errs, err)
-			}
-		}
-		return errors.Join(errs...)
-	}
+
 	return slog.New(slog.NewMultiHandler(handlers...)), closer, nil
 }
 
