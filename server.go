@@ -97,6 +97,14 @@ const logContextKey contextKey = "log_context"
 
 type LogContext struct {
 	Username string
+	Error    error
+}
+
+func httpError(ctx context.Context, w http.ResponseWriter, status int, err error) {
+	if logCtx, ok := ctx.Value(logContextKey).(*LogContext); ok {
+		logCtx.Error = err
+	}
+	http.Error(w, err.Error(), status)
 }
 
 func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
@@ -105,10 +113,11 @@ func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 			start := time.Now()
 
 			spyReader := &spyReadCloser{ReadCloser: r.Body}
+			r.Body = spyReader
 			spyWriter := &spyResponseWriter{ResponseWriter: w}
 
-			logCtx := LogContext{}
-			r = r.WithContext(context.WithValue(r.Context(), logContextKey, &logCtx))
+			logCtx := &LogContext{}
+			r = r.WithContext(context.WithValue(r.Context(), logContextKey, logCtx))
 
 			next.ServeHTTP(spyWriter, r)
 
@@ -122,9 +131,12 @@ func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 				slog.Int("response_body_bytes", spyWriter.bytesWritten),
 			}
 
-			// username was set in the handeler
 			if logCtx.Username != "" {
 				attrs = append(attrs, slog.String("user", logCtx.Username))
+			}
+
+			if logCtx.Error != nil {
+				attrs = append(attrs, slog.Any("error", logCtx.Error))
 			}
 
 			logger.Info("Served request", attrs...)
