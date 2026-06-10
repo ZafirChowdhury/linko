@@ -15,6 +15,8 @@ import (
 	"boot.dev/linko/internal/build"
 	"boot.dev/linko/internal/linkoerr"
 	"boot.dev/linko/internal/store"
+	tint "github.com/lmittmann/tint"
+	isatty "github.com/mattn/go-isatty"
 	pkgerr "github.com/pkg/errors"
 )
 
@@ -84,10 +86,15 @@ func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir s
 type closeFunc func() error
 
 func initializeLogger(logFile string) (*slog.Logger, closeFunc, error) {
+	colorEnabled :=
+		isatty.IsTerminal(os.Stderr.Fd()) ||
+			isatty.IsCygwinTerminal(os.Stderr.Fd())
+
 	handlers := []slog.Handler{
-		slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		tint.NewHandler(os.Stderr, &tint.Options{
 			Level:       slog.LevelDebug,
 			ReplaceAttr: replaceAttr,
+			NoColor:     !colorEnabled,
 		}),
 	}
 	closers := []closeFunc{}
@@ -135,7 +142,6 @@ type multiError interface {
 	Unwrap() []error
 }
 
-// I have no idea what this is doing rn
 func errorAttrs(err error) []slog.Attr {
 	attrs := []slog.Attr{
 		{Key: "message", Value: slog.StringValue(err.Error())},
