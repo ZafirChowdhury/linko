@@ -6,8 +6,10 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/signal"
+	"slices"
 	"syscall"
 	"time"
 
@@ -161,5 +163,26 @@ func replaceAttr(groups []string, a slog.Attr) slog.Attr {
 
 		return slog.GroupAttrs("error", errorAttrs(err)...)
 	}
+
+	var sensitiveKeys = []string{"password", "key", "apikey", "secret", "pin", "creditcardno", "user"}
+	if slices.Contains(sensitiveKeys, a.Key) {
+		return slog.String(a.Key, "[REDACTED]")
+	}
+
+	if a.Value.Kind() == slog.KindString {
+		u, err := url.Parse(a.Value.String())
+		if err != nil {
+			return a
+		}
+
+		_, ok := u.User.Password()
+		if !ok {
+			return a
+		}
+
+		u.User = url.UserPassword(u.User.Username(), "[REDACTED]")
+		return slog.String(a.Key, u.String())
+	}
+
 	return a
 }
