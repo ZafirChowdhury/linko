@@ -9,14 +9,25 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	nethttppprof "net/http/pprof"
 	"os"
+	"strconv"
 	"time"
 
-	"net/http/pprof"
-
-	"boot.dev/linko/internal/store"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+
+	"boot.dev/linko/internal/store"
+)
+
+var httpRequestsTotal = promauto.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "http_requests_total",
+		Help: "Total number of HTTP requests.",
+	},
+	[]string{"method", "path", "status"},
 )
 
 type server struct {
@@ -36,27 +47,20 @@ func newServer(store store.Store, port int, logger *slog.Logger, cancel context.
 	}
 
 	s.httpServer = &http.Server{
-		Addr: fmt.Sprintf(":%d", port),
-		Handler: otelhttp.NewHandler(
-			metricsMiddleware(requestID()(requestLogger(logger)(mux))),
-			"http.server",
-		),
-		// middleWare()middleWare()(mux)
+		Addr:    fmt.Sprintf(":%d", port),
+		Handler: otelhttp.NewHandler(metricsMiddleware(requestID()(requestLogger(logger)(mux))), "http.server"),
 	}
 
+	mux.Handle("GET /metrics", promhttp.Handler())
+	mux.Handle("GET /debug/pprof/", s.authMiddleware(http.HandlerFunc(nethttppprof.Index)))
+	mux.Handle("GET /debug/pprof/profile", s.authMiddleware(http.HandlerFunc(nethttppprof.Profile)))
 	mux.HandleFunc("GET /", s.handlerIndex)
 	mux.Handle("POST /api/login", s.authMiddleware(http.HandlerFunc(s.handlerLogin)))
 	mux.Handle("POST /api/shorten", s.authMiddleware(http.HandlerFunc(s.handlerShortenLink)))
 	mux.Handle("GET /api/stats", s.authMiddleware(http.HandlerFunc(s.handlerStats)))
 	mux.Handle("GET /api/urls", s.authMiddleware(http.HandlerFunc(s.handlerListURLs)))
-	mux.HandleFunc("GET /{shortCode}", s.handlerRedirect)
+	mux.Handle("GET /{shortCode}", http.HandlerFunc(s.handlerRedirect))
 	mux.HandleFunc("POST /admin/shutdown", s.handlerShutdown)
-
-	mux.Handle("GET /metrics", promhttp.Handler())
-
-	// profiling
-	mux.Handle("GET /debug/pprof/", s.authMiddleware(http.HandlerFunc(pprof.Index)))
-	mux.Handle("GET /debug/pprof/profile", s.authMiddleware(http.HandlerFunc(pprof.Profile)))
 
 	return s
 }
@@ -119,29 +123,12 @@ func httpError(ctx context.Context, w http.ResponseWriter, status int, err error
 	if logCtx, ok := ctx.Value(logContextKey).(*LogContext); ok {
 		logCtx.Error = err
 	}
-
 	msg := err.Error()
 	switch status {
 	case http.StatusUnauthorized, http.StatusForbidden, http.StatusInternalServerError:
 		msg = http.StatusText(status)
 	}
-
 	http.Error(w, msg, status)
-}
-
-func requestID() func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			rID := r.Header.Get("X-Request-ID")
-
-			if rID == "" {
-				rID = rand.Text()
-			}
-
-			w.Header().Set("X-Request-ID", rID)
-			next.ServeHTTP(w, r)
-		})
-	}
 }
 
 func redactIP(addr string) string {
@@ -149,25 +136,58 @@ func redactIP(addr string) string {
 	if err != nil {
 		host = addr
 	}
-
 	ip := net.ParseIP(host)
 	if ip == nil {
-		return addr
+		return host
 	}
-
-	ip4 := ip.To4()
-	if ip4 == nil {
-		return addr
+	if ip4 := ip.To4(); ip4 != nil {
+		return fmt.Sprintf("%d.%d.%d.x", ip4[0], ip4[1], ip4[2])
 	}
+	return ip.String()
+}
 
-	return fmt.Sprintf("%d.%d.%d.x", ip4[0], ip[1], ip[2])
+func requestID() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			id := r.Header.Get("X-Request-ID")
+			if id == "" {
+				id = rand.Text()
+			}
+			w.Header().Set("X-Request-ID", id)
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func metricsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rec := &statusRecorder{
+			ResponseWriter: w,
+			status:         http.StatusOK,
+		}
+
+		next.ServeHTTP(rec, r)
+
+		httpRequestsTotal.
+			WithLabelValues(r.Method, r.URL.Path, strconv.Itoa(rec.status)).
+			Inc()
+	})
 }
 
 func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
-
 			spyReader := &spyReadCloser{ReadCloser: r.Body}
 			r.Body = spyReader
 			spyWriter := &spyResponseWriter{ResponseWriter: w}
@@ -185,21 +205,14 @@ func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 				slog.Int("request_body_bytes", spyReader.bytesRead),
 				slog.Int("response_status", spyWriter.statusCode),
 				slog.Int("response_body_bytes", spyWriter.bytesWritten),
+				slog.String("request_id", spyWriter.Header().Get("X-Request-ID")),
 			}
-
 			if logCtx.Username != "" {
 				attrs = append(attrs, slog.String("user", logCtx.Username))
 			}
-
 			if logCtx.Error != nil {
 				attrs = append(attrs, slog.Any("error", logCtx.Error))
 			}
-
-			rID := w.Header().Get("X-Request-ID")
-			if rID != "" {
-				attrs = append(attrs, slog.String("request_id", rID))
-			}
-
 			logger.Info("Served request", attrs...)
 		})
 	}
