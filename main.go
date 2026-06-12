@@ -38,6 +38,16 @@ func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir s
 	env := os.Getenv("ENV")
 	hostname, _ := os.Hostname()
 
+	shutdown, err := initTracing(ctx)
+	if err != nil {
+		fmt.Println(err.Error())
+	}
+	defer func() {
+		if err := shutdown(context.Background()); err != nil {
+			fmt.Fprintf(os.Stderr, "tracing shutdown: %v\n", err)
+		}
+	}()
+
 	logger, closeLogger, err := initializeLogger(os.Getenv("LINKO_LOG_FILE"))
 
 	if err != nil {
