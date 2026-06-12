@@ -34,7 +34,7 @@ func newServer(store store.Store, port int, logger *slog.Logger, cancel context.
 
 	s.httpServer = &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
-		Handler: requestID()(requestLogger(logger)(mux)),
+		Handler: metricsMiddleware(requestID()(requestLogger(logger)(mux))),
 		// middleWare()middleWare()(mux)
 	}
 
